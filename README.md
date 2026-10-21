@@ -119,7 +119,7 @@ a directory named `corvus-regex-ecma262-swift` (a clone's default).
 
 ## Releasing
 
-A release is a tag, `<version>` with no prefix as SwiftPM reads it, made as a GitHub release. Before it, set the
+A release is a GitHub release tagged `v<version>` (SwiftPM reads the version past the `v`). Before it, set the
 XCFramework's URL and checksum in `Package.swift` to those of the C library release it is built on (the checksum is
 the `.sha256` file attached beside the XCFramework), and the version in the Dockerfile and in CI. The release
 publishes the harness image with the release's tag.
