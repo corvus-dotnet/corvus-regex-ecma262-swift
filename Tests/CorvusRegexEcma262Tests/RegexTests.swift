@@ -1,5 +1,6 @@
 // The package's tests: each member over String and [UInt16] text, against the answers V8 gives.
 import CorvusRegexEcma262
+import Foundation
 import XCTest
 
 final class RegexTests: XCTestCase {
@@ -135,6 +136,36 @@ final class RegexTests: XCTestCase {
         XCTAssertEqual(try date.replace(in: "2026-10, 2027-01", with: "$<month>/$1"), "10/2026, 01/2027")
         XCTAssertEqual(try date.replace(in: "2026-10") { String($0["month"]!) }, "10")
         XCTAssertEqual(try Regex(#"\s*(;)\s*"#).split("a ; b;c"), ["a", ";", "b", ";", "c"])
+    }
+
+    func testNestedClassesOnASmallStack() {
+        // With v a class holds classes, each a level of reading: on a thread of 256 KB the deepest nesting allowed is
+        // read, compiled and matched, and deeper is refused as too large, rather than overflowing the stack, which ends
+        // the process (as with the C library up to 0.1.1).
+        final class Results: @unchecked Sendable { var answers: [String] = [] }
+        let results = Results()
+        let done = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            defer { done.signal() }
+            func nest(_ depth: Int) -> String {
+                String(repeating: "[", count: depth) + "a" + String(repeating: "]", count: depth)
+            }
+            results.answers.append((try? Regex(nest(1000), flags: "v").test("a")) == true ? "matched" : "not matched")
+            for pattern in [nest(1001), String(repeating: "[", count: 200_000)] {
+                do {
+                    _ = try Regex(pattern, flags: "v")
+                    results.answers.append("compiled")
+                } catch let e as RegexError {
+                    results.answers.append(e.kind == .patternTooLarge ? "too large" : "\(e.kind)")
+                } catch {
+                    results.answers.append("\(error)")
+                }
+            }
+        }
+        thread.stackSize = 256 * 1024
+        thread.start()
+        done.wait()
+        XCTAssertEqual(results.answers, ["matched", "too large", "too large"])
     }
 
     func testVersion() {
