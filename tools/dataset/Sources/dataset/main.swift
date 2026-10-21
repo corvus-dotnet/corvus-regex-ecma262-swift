@@ -5,16 +5,19 @@
 //   swift run -c release dataset <data directory> <wrong-cases file> [--files <glob>]
 //
 // Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the unicode
-// answers), the record's flags alone (the legacy answers) and, in the file that has them, the flags with v added (the
-// unicode_sets answers). A text is matched as [UInt16] (positions in code units, as the data gives them) and as a
+// answers), the record's flags alone (the legacy answers) and, in the records that have them, the flags with v added
+// (the unicode_sets answers). A text is matched as [UInt16] (positions in code units, as the data gives them) and as a
 // String (positions in UTF-8 bytes); a text with a lone surrogate has no String form and is matched as [UInt16] alone.
-// Records marked v8_deviation are left out. Any difference from V8 is a wrong answer; a refusal of a valid pattern, an
-// acceptance of an invalid one, and a match that reaches its limit are counted apart and listed too. captures.jsonl is
-// judged on exec, the global search, the sticky flag, replace and split. A match is given 2 seconds.
+// Records and tests marked v8_deviation are left out, but for those marked unicode-version, where V8 has the Unicode of
+// 16 and test262 that of 17: the C library has Unicode 17, so they are judged by test262's verdicts (test262_valid) and
+// answers (test262_answer) in the grammars those name, and left out in the others. Any difference from V8 is a wrong
+// answer; a refusal of a valid pattern, an acceptance of an invalid one, and a match that reaches its limit are counted
+// apart and listed too. captures.jsonl is judged on exec, the global search, the sticky flag, replace and split. A
+// match is given 2 seconds.
 //
-// JSONSerialization refuses a lone surrogate, which the data holds, so each lone surrogate escape is read as a code
-// point of Plane 15's private use area (U+F0000 + its offset from U+D800), which the data does not use (a line that
-// does is refused), and turned back into its code unit wherever the text is used.
+// JSONSerialization refuses a lone surrogate, which the data holds, so each lone surrogate escape is read as an
+// unassigned code point of Plane 10 (U+A4000 + its offset from U+D800), which the data does not use (a line that does
+// is refused), and turned back into its code unit wherever the text is used.
 import CorvusRegexEcma262
 import Foundation
 
@@ -29,15 +32,21 @@ struct Counts {
     }
 }
 
-// The line with each lone surrogate escape written as the escape of its Plane 15 code point.
+// The first of the code points that stand for the lone surrogates, U+D800 to U+DFFF: unassigned ones in the middle of
+// Plane 10, where the data has none (test262's texts take Plane 15's private use area and the ends of every plane).
+let standIn: UInt32 = 0xA4000
+
+func standsIn(_ v: UInt32) -> Bool { v >= standIn && v < standIn + 0x800 }
+
+// The line with each lone surrogate escape written as the escape of the code point that stands for it.
 let surrogateEscape = try! NSRegularExpression(
     pattern: #"\\\\|\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})|\\u(d[89a-f][0-9a-f]{2})"#, options: [.caseInsensitive])
 
 func readable(_ line: String) -> String {
-    if line.range(of: #"\\udb8[01]"#, options: [.regularExpression, .caseInsensitive]) != nil
-        || line.unicodeScalars.contains(where: { $0.value >= 0xF0000 && $0.value <= 0xF07FF })
+    if line.range(of: #"\\uda5[01]"#, options: [.regularExpression, .caseInsensitive]) != nil
+        || line.unicodeScalars.contains(where: { standsIn($0.value) })
     {
-        fatalError("the data uses U+F0000-U+F07FF, which the runner reads lone surrogates as")
+        fatalError("the data uses U+A4000-U+A47FF, which the runner reads lone surrogates as")
     }
     let ns = line as NSString
     var out = ""
@@ -46,7 +55,7 @@ func readable(_ line: String) -> String {
         let lone = m.range(at: 3)
         guard lone.location != NSNotFound else { continue }
         out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-        let v = 0xF0000 + Int(ns.substring(with: lone), radix: 16)! - 0xD800 - 0x10000
+        let v = Int(standIn) + Int(ns.substring(with: lone), radix: 16)! - 0xD800 - 0x10000
         out += String(format: "\\u%04x\\u%04x", 0xD800 + (v >> 10), 0xDC00 + (v & 0x3FF))
         last = m.range.location + m.range.length
     }
@@ -59,8 +68,8 @@ func units(_ s: String) -> [UInt16] {
     var out: [UInt16] = []
     for c in s.unicodeScalars {
         let v = c.value
-        if v >= 0xF0000 && v <= 0xF07FF {
-            out.append(UInt16(0xD800 + v - 0xF0000))
+        if standsIn(v) {
+            out.append(UInt16(0xD800 + v - standIn))
         } else {
             out.append(contentsOf: String(c).utf16)
         }
@@ -68,11 +77,11 @@ func units(_ s: String) -> [UInt16] {
     return out
 }
 
-func lone(_ s: String) -> Bool { s.unicodeScalars.contains { $0.value >= 0xF0000 && $0.value <= 0xF07FF } }
+func lone(_ s: String) -> Bool { s.unicodeScalars.contains { standsIn($0.value) } }
 
 // UTF-8, a lone surrogate as U+FFFD (as String::from_utf16_lossy writes it).
 func utf8Lossy(_ s: String) -> String {
-    String(String.UnicodeScalarView(s.unicodeScalars.map { ($0.value >= 0xF0000 && $0.value <= 0xF07FF) ? "\u{FFFD}" : $0 }))
+    String(String.UnicodeScalarView(s.unicodeScalars.map { standsIn($0.value) ? "\u{FFFD}" : $0 }))
 }
 
 func escape(_ s: String) -> String {
@@ -119,6 +128,13 @@ func compile(_ pattern: String, _ flags: String) -> Compiled {
     }
 }
 
+// Whether a deviation is judged by test262's answers: one of the Unicode version, which this package has as test262
+// has it.
+func byTest262(_ marked: [String: Any]) -> Bool { marked["deviation"] as? String == "unicode-version" }
+
+// Whether a record is left out: one marked v8_deviation that is not judged by test262's answers.
+func skippedRecord(_ r: [String: Any]) -> Bool { r["v8_deviation"] as? Bool == true && !byTest262(r) }
+
 func modes(_ r: [String: Any]) -> [(String, String, Bool)] {
     let valid = r["valid"] as? [String: Any] ?? [:]
     var out = [("u", "unicode", valid["unicode"] as? Bool == true), ("", "legacy", valid["legacy"] as? Bool == true)]
@@ -129,7 +145,14 @@ func modes(_ r: [String: Any]) -> [(String, String, Bool)] {
 func judgeTests(_ name: String, _ r: [String: Any], _ pattern: String, _ c: inout Counts, _ w: inout [String]) {
     let flags = r["flags"] as? String ?? ""
     let headPattern = shown(pattern)
-    for (suffix, answer, valid) in modes(r) {
+    // A record marked for the Unicode version is judged in the grammars test262 gives a verdict for, by it.
+    let recordByTest262 = r["v8_deviation"] as? Bool == true && byTest262(r)
+    for (suffix, answer, v8Valid) in modes(r) {
+        var valid = v8Valid
+        if recordByTest262 {
+            guard let verdict = (r["test262_valid"] as? [String: Any])?[answer] as? Bool else { continue }
+            valid = verdict
+        }
         let modeFlags = flags + suffix
         let head = "\(name)\t/\(headPattern)/\(modeFlags)"
         let re: Regex
@@ -149,7 +172,12 @@ func judgeTests(_ name: String, _ r: [String: Any], _ pattern: String, _ c: inou
             continue
         }
         for test in r["tests"] as? [[String: Any]] ?? [] {
-            guard let expected = test[answer] as? Bool, let text = test["text"] as? String else { continue }
+            // A test marked for the Unicode version, or any test of a record so marked, is judged by test262's answer
+            // in this grammar, and left out where it has none. A test marked otherwise is left out.
+            let marked = test["v8_deviation"] as? Bool == true
+            if marked && !byTest262(test) { continue }
+            let answers = marked || recordByTest262 ? test["test262_answer"] as? [String: Any] ?? [:] : test
+            guard let expected = answers[answer] as? Bool, let text = test["text"] as? String else { continue }
             for enc in ["utf16", "utf8"] {
                 if enc == "utf8" && lone(text) { continue }
                 do {
@@ -319,7 +347,7 @@ func judgeLines(_ name: String, _ lines: ArraySlice<Substring>) -> (Counts, [Str
     for line in lines where !line.isEmpty {
         let data = readable(String(line)).data(using: .utf8)!
         let r = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-        if r["v8_deviation"] as? Bool == true { skipped += 1; continue }
+        if skippedRecord(r) { skipped += 1; continue }
         records += 1
         guard let pattern = r["pattern"] as? String else { continue }
         if name == "captures.jsonl" { judgeCaptures(r, pattern, &c, &w) } else { judgeTests(name, r, pattern, &c, &w) }
@@ -362,7 +390,7 @@ for name in files {
         skipped += skip
     }
     print(String(format: "%@ right %10d  wrong %6d  refused-valid %4d  accepted-invalid %4d  limit %4d  %6.1fs",
-                 name.padding(toLength: 24, withPad: " ", startingAt: 0), fileTotal.right, fileTotal.wrong, fileTotal.refused,
+                 name.padding(toLength: max(24, name.count), withPad: " ", startingAt: 0), fileTotal.right, fileTotal.wrong, fileTotal.refused,
                  fileTotal.accepted, fileTotal.limited, Date().timeIntervalSince(start)))
     fflush(stdout)
     total.add(fileTotal)
