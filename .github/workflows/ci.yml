@@ -1,0 +1,94 @@
+# The tests on Linux (x64 and arm64, over the C library's release archive found through pkg-config, as a user's build
+# finds it) and on macOS (over the XCFramework the C library's release attaches, as Package.swift names it), with
+# builds for iOS and the iOS simulator; and the ECMA-262 test data through this package on Linux. The data is pinned
+# to a commit; the pass is 0 wrong answers, 0 refusals of a valid pattern, 0 acceptances of an invalid one and 0
+# matches at their limit, over String and [UInt16].
+name: ci
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CRE_VERSION: 0.1.1
+
+jobs:
+  linux:
+    name: Test (linux-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: x64
+          os: ubuntu-24.04
+          target: x86_64-unknown-linux-gnu
+          sha256: 2a910ffe9a96ae471da3c28bd144b31572878b9df9d0b7492f5988de5e9d3971
+        - arch: arm64
+          os: ubuntu-24.04-arm
+          target: aarch64-unknown-linux-gnu
+          sha256: c1435cd5829ed4fae7f7435d6f09f4ea55f53fb7068cbef360ae316b3508a2e5
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - name: The C library's release archive
+      run: |
+        curl -sSfL -o cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-${{ matrix.target }}.tar.gz"
+        echo "${{ matrix.sha256 }}  cre.tar.gz" | sha256sum -c -
+        mkdir -p "$RUNNER_TEMP/cre" && tar -xzf cre.tar.gz -C "$RUNNER_TEMP/cre" --strip-components 1
+    - name: Test
+      # In the Swift image, with the repository at a directory named as the package (the tools find it by its path).
+      run: |
+        docker run --rm -v "$PWD:/corvus-regex-ecma262-swift" -v "$RUNNER_TEMP/cre:/opt/cre:ro" -w /corvus-regex-ecma262-swift \
+          -e PKG_CONFIG_PATH=/opt/cre/lib/pkgconfig -e LD_LIBRARY_PATH=/opt/cre/lib docker.io/library/swift:6.4 \
+          bash -c 'apt-get update -qq && apt-get install -y -qq pkg-config >/dev/null && swift test -j 4'
+
+  dataset:
+    name: The ECMA-262 test data (linux-x64)
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        repository: corvus-dotnet/ecma262-regex-test-data
+        ref: 41ed6db477c0d57192673a3a1a76a3b7a194603b
+        path: ecma262-regex-test-data
+        persist-credentials: false
+    - name: The C library's release archive
+      run: |
+        curl -sSfL -o cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+        echo "2a910ffe9a96ae471da3c28bd144b31572878b9df9d0b7492f5988de5e9d3971  cre.tar.gz" | sha256sum -c -
+        mkdir -p "$RUNNER_TEMP/cre" && tar -xzf cre.tar.gz -C "$RUNNER_TEMP/cre" --strip-components 1
+    - name: Run the ECMA-262 test data
+      run: |
+        docker run --rm -v "$PWD:/corvus-regex-ecma262-swift" -v "$RUNNER_TEMP/cre:/opt/cre:ro" -w /corvus-regex-ecma262-swift/tools/dataset \
+          -e PKG_CONFIG_PATH=/opt/cre/lib/pkgconfig -e LD_LIBRARY_PATH=/opt/cre/lib docker.io/library/swift:6.4 \
+          bash -c 'apt-get update -qq && apt-get install -y -qq pkg-config >/dev/null && swift build -c release -j 4 && .build/release/dataset ../../ecma262-regex-test-data/data ../../wrong-cases.tsv'
+    - name: Keep the wrong cases
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: wrong-cases
+        path: wrong-cases.tsv
+
+  apple:
+    name: Test (macOS) and build (iOS, iOS simulator)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - name: Test
+      run: swift test -j 4
+    - name: Build for iOS and the iOS simulator
+      run: |
+        xcodebuild build -scheme CorvusRegexEcma262 -destination 'generic/platform=iOS' -quiet
+        xcodebuild build -scheme CorvusRegexEcma262 -destination 'generic/platform=iOS Simulator' -quiet

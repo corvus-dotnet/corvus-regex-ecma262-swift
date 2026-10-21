@@ -1,0 +1,5 @@
+module CCorvusRegexEcma262 [system] {
+    header "shim.h"
+    link "corvus_regex_ecma262"
+    export *
+}
