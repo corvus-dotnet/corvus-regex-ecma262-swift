@@ -6,6 +6,9 @@
 // them). Without the u or v flag a pattern is matched by UTF-16 code unit, so a match can take half of a character
 // beyond the Basic Multilingual Plane: over a String its text holds that half as U+FFFD and its range is the whole
 // character's (its UTF-8 range ends or starts at the character's third byte); over [UInt16] it is the lone half.
+//
+// A String is always UTF-8, so its text goes to the C library's _unchecked functions, which do not read the whole text
+// once more on each call to check it.
 import CCorvusRegexEcma262
 
 /// Why a call failed.
@@ -142,8 +145,8 @@ public final class Regex: @unchecked Sendable {
         try text.withUTF8 { t in
             guard offset <= t.count else { return }
             try check(timeout == nil
-                ? cre_regex_captures(handle, chars(t), t.count, offset, captures, &found)
-                : cre_regex_captures_limit(handle, chars(t), t.count, offset, millis(timeout), captures, &found))
+                ? cre_regex_captures_unchecked(handle, chars(t), t.count, offset, captures, &found)
+                : cre_regex_captures_limit_unchecked(handle, chars(t), t.count, offset, millis(timeout), captures, &found))
         }
         return found ? Match(text: original, captures: captures, names: groupNames) : nil
     }
@@ -157,7 +160,7 @@ public final class Regex: @unchecked Sendable {
         var out: [Match] = []
         try text.withUTF8 { t in
             var it: OpaquePointer?
-            try check(cre_regex_captures_iter(handle, chars(t), t.count, &it))
+            try check(cre_regex_captures_iter_unchecked(handle, chars(t), t.count, &it))
             defer { cre_matches_free(it) }
             var found = false
             while true {
@@ -174,7 +177,7 @@ public final class Regex: @unchecked Sendable {
         var text = text
         return try text.withUTF8 { t in
             var it: OpaquePointer?
-            try check(cre_regex_find_iter(handle, chars(t), t.count, &it))
+            try check(cre_regex_find_iter_unchecked(handle, chars(t), t.count, &it))
             defer { cre_matches_free(it) }
             return try count(it)
         }
@@ -211,8 +214,8 @@ public final class Regex: @unchecked Sendable {
         try text.withUTF8 { t in
             try template.withUTF8 { r in
                 try check(all
-                    ? cre_regex_replace_all(handle, chars(t), t.count, chars(r), r.count, &out)
-                    : cre_regex_replace(handle, chars(t), t.count, chars(r), r.count, &out))
+                    ? cre_regex_replace_all_unchecked(handle, chars(t), t.count, chars(r), r.count, &out)
+                    : cre_regex_replace_unchecked(handle, chars(t), t.count, chars(r), r.count, &out))
             }
         }
         defer { cre_string_free(&out) }
@@ -249,7 +252,7 @@ public final class Regex: @unchecked Sendable {
         var text = text
         var pieces = cre_pieces(items: nil, len: 0, internal: nil)
         try text.withUTF8 { t in
-            try check(cre_regex_split(handle, chars(t), t.count, limit.map { UInt32(clamping: $0) } ?? CRE_SPLIT_ALL, &pieces))
+            try check(cre_regex_split_unchecked(handle, chars(t), t.count, limit.map { UInt32(clamping: $0) } ?? CRE_SPLIT_ALL, &pieces))
         }
         defer { cre_pieces_free(&pieces) }
         return (0..<pieces.len).map { k in
