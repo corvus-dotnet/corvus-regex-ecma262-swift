@@ -69,6 +69,18 @@ func millis(_ timeout: Double?) -> UInt64 {
     return ms <= 1 ? 1 : UInt64(ms)
 }
 
+/// The milliseconds of a timeout in seconds (0, or less, for none; otherwise at least 1).
+func timeoutMillis(_ timeout: Double) -> UInt64 {
+    if !(timeout > 0) { return 0 }
+    let ms = timeout * 1000
+    return ms <= 1 ? 1 : (ms >= Double(UInt64.max) ? UInt64.max : UInt64(ms))
+}
+
+/// The seconds of a timeout in milliseconds, nil for none.
+func seconds(_ millis: UInt64) -> Double? {
+    millis == 0 ? nil : Double(millis) / 1000
+}
+
 let unset = Int(bitPattern: UInt(CRE_UNSET))
 
 /// A compiled ECMA-262 regular expression, as `new RegExp(pattern, flags)` compiles it. It is immutable: any number of
@@ -80,13 +92,23 @@ public final class Regex: @unchecked Sendable {
     let global: Bool
 
     /// Compiles a pattern with the flags `new RegExp(pattern, flags)` takes, any of dgimsuvy. Throws a RegexError:
-    /// invalidPattern, invalidFlags or patternTooLarge.
-    public init(_ pattern: String, flags: String = "") throws {
+    /// invalidPattern, invalidFlags or patternTooLarge. `timeout` is the time in seconds each match may take before it
+    /// is abandoned with a RegexError of kind matchLimit (0 for none); nil takes `Regex.defaultTimeout`, which is none
+    /// unless set. A timeout also caps the backtracking memory of a match; without one a match has no limit of time or
+    /// of memory, so give a pattern or a text from outside one.
+    public init(_ pattern: String, flags: String = "", timeout: Double? = nil) throws {
         var regex: OpaquePointer?
         var pattern = pattern
         var flags = flags
         try pattern.withUTF8 { p in
-            try flags.withUTF8 { f in try check(cre_regex_new(chars(p), p.count, chars(f), f.count, &regex)) }
+            try flags.withUTF8 { f in
+                if let timeout {
+                    let ms = timeoutMillis(timeout)
+                    try check(cre_regex_new_with_timeout(chars(p), p.count, chars(f), f.count, ms, &regex))
+                } else {
+                    try check(cre_regex_new(chars(p), p.count, chars(f), f.count, &regex))
+                }
+            }
         }
         let h = regex!
         handle = h
@@ -114,6 +136,18 @@ public final class Regex: @unchecked Sendable {
     /// The number of capturing groups.
     public var groupCount: Int { cre_regex_group_count(handle) }
 
+    /// The time in seconds each match may take before it is abandoned with a RegexError of kind matchLimit, or nil for
+    /// no limit.
+    public var timeout: Double? { seconds(cre_regex_match_timeout(handle)) }
+
+    /// The timeout in seconds of every Regex made from now on without one of its own, or nil (or 0) for no limit, the
+    /// default. It is the process-wide default of .NET's REGEX_DEFAULT_MATCH_TIMEOUT; a program that matches patterns
+    /// or texts from outside should set it when it starts. A Regex already made keeps its own.
+    public static var defaultTimeout: Double? {
+        get { seconds(cre_default_match_timeout()) }
+        set { cre_set_default_match_timeout(newValue.map(timeoutMillis) ?? 0) }
+    }
+
     func newCaptures() throws -> OpaquePointer {
         var c: OpaquePointer?
         try check(cre_captures_new(handle, &c))
@@ -124,14 +158,15 @@ public final class Regex: @unchecked Sendable {
     // String
 
     /// Whether the pattern matches at or after `start` (at `start` alone with the y flag), as RegExp.prototype.test
-    /// with lastIndex there. With a timeout in seconds, a match that reaches it throws a RegexError of kind matchLimit.
+    /// with lastIndex there. A match that reaches the pattern's timeout throws a RegexError of kind matchLimit; a timeout
+    /// in seconds here takes its place for this match.
     public func test(_ text: String, from start: String.Index? = nil, timeout: Double? = nil) throws -> Bool {
         let offset = start.map { text.utf8.distance(from: text.utf8.startIndex, to: $0) } ?? 0
         return try firstMatchUTF8(text, offset: offset, timeout: timeout) != nil
     }
 
-    /// The first match at or after `start`, as exec finds it with lastIndex there, or nil. With a timeout, a match that
-    /// reaches it throws a RegexError of kind matchLimit.
+    /// The first match at or after `start`, as exec finds it with lastIndex there, or nil. A match that reaches the
+    /// pattern's timeout throws a RegexError of kind matchLimit; a timeout in seconds here takes its place.
     public func firstMatch(in text: String, from start: String.Index? = nil, timeout: Double? = nil) throws -> Match? {
         let offset = start.map { text.utf8.distance(from: text.utf8.startIndex, to: $0) } ?? 0
         return try firstMatchUTF8(text, offset: offset, timeout: timeout)

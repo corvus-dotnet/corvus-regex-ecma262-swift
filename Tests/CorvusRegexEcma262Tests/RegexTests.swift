@@ -125,6 +125,61 @@ final class RegexTests: XCTestCase {
         XCTAssertFalse(try Regex(#"^(a+)+$"#).test(text, timeout: 1))
     }
 
+    static let never = #"^(?:(a+)\1*)+$"#
+    static let long = String(repeating: "a", count: 60) + "b"
+
+    func assertLimit<T>(_ what: String, _ call: () throws -> T) {
+        XCTAssertThrowsError(try call(), what) { XCTAssertEqual(($0 as? RegexError)?.kind, .matchLimit, what) }
+    }
+
+    func testAPatternHasATimeoutEveryMethodHonours() throws {
+        let re = try Regex(Self.never, flags: "u", timeout: 0.03)
+        XCTAssertEqual(re.timeout, 0.03)
+        let text = Self.long
+        let t16 = u16(text)
+        assertLimit("test") { try re.test(text) }
+        assertLimit("firstMatch") { try re.firstMatch(in: text) }
+        assertLimit("matches") { try re.matches(in: text) }
+        assertLimit("matchCount") { try re.matchCount(in: text) }
+        assertLimit("replace") { try re.replace(in: text, with: "x") }
+        assertLimit("replaceAll") { try re.replaceAll(in: text, with: "x") }
+        assertLimit("replace, transform") { try re.replace(in: text) { _ in "x" } }
+        assertLimit("split") { try re.split(text) }
+        assertLimit("split, limit") { try re.split(text, limit: 2) }
+        assertLimit("test, utf16") { try re.test(utf16: t16) }
+        assertLimit("firstMatch, utf16") { try re.firstMatch(utf16: t16) }
+        assertLimit("matches, utf16") { try re.matches(utf16: t16) }
+        assertLimit("matchCount, utf16") { try re.matchCount(utf16: t16) }
+        assertLimit("replace, utf16") { try re.replace(utf16: t16, with: u16("x")) }
+        assertLimit("split, utf16") { try re.split(utf16: t16) }
+        XCTAssertTrue(try re.test("aaaa"))
+        XCTAssertEqual(try re.replace(in: "aaaa", with: "<$&>"), "<aaaa>")
+        // A timeout of its own takes the pattern's place for one match.
+        assertLimit("a limit of its own") { try Regex(Self.never, flags: "u", timeout: 3600).test(text, timeout: 0.03) }
+        // A timeout caps the backtracking memory too.
+        XCTAssertThrowsError(try Regex("(?:a?){2147483647}", timeout: 3600).test("")) {
+            XCTAssertEqual(($0 as? RegexError)?.kind, .matchLimit)
+            XCTAssertTrue(($0 as? RegexError)?.message.contains("memory") ?? false)
+        }
+    }
+
+    func testTheDefaultTimeout() throws {
+        XCTAssertNil(Regex.defaultTimeout)
+        XCTAssertNil(try Regex("a").timeout)
+        Regex.defaultTimeout = 0.03
+        defer { Regex.defaultTimeout = nil }
+        XCTAssertEqual(Regex.defaultTimeout, 0.03)
+        let re = try Regex(Self.never, flags: "u")
+        let own = try Regex("a", timeout: 5)
+        let none = try Regex("a", timeout: 0)
+        Regex.defaultTimeout = nil
+        XCTAssertNil(Regex.defaultTimeout)
+        XCTAssertEqual(re.timeout, 0.03)
+        assertLimit("the default") { try re.test(Self.long) }
+        XCTAssertEqual(own.timeout, 5)
+        XCTAssertNil(none.timeout)
+    }
+
     // The README's example, as it is written there.
     func testReadme() throws {
         let date = try Regex(#"(?<year>\d{4})-(?<month>\d{2})"#, flags: "gu")

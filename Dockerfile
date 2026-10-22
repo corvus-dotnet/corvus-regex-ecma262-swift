@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config pyth
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # The C library: the release's archive for x86_64 Linux, checked against its hash.
-ARG CRE_VERSION=0.1.3
-ARG CRE_SHA256=3d9bae45a3bccbc1121ea0707eb59f08b545aac589e557c767163336a05b3c56
+ARG CRE_VERSION=0.2.0
+ARG CRE_SHA256=019d911d3713d6f6a3642c3769f828ff35ba02b25738574771ed7ccb30f1644b
 RUN curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
     && echo "${CRE_SHA256}  /tmp/cre.tar.gz" | sha256sum -c - \
     && mkdir -p /opt/cre && tar -xzf /tmp/cre.tar.gz -C /opt/cre --strip-components 1 && rm /tmp/cre.tar.gz
