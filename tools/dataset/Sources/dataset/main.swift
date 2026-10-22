@@ -13,8 +13,11 @@
 // judged on exec, the global search, the sticky flag, replace and split. A match is given 2 seconds.
 //
 // JSONSerialization refuses a lone surrogate, which the data holds, so each lone surrogate escape is read as a code
-// point of Plane 15's private use area (U+F0000 + its offset from U+D800), which the data does not use (a line that
-// does is refused), and turned back into its code unit wherever the text is used.
+// point of a block of 2,048 private use code points (the block's first + its offset from U+D800) and turned back into
+// its code unit wherever the text is used. The block is chosen for each line from the blocks of Planes 15 and 16: the
+// first whose code points the line does not hold, which is known when the line, read with that block, holds as many
+// of them as it had lone surrogate escapes. So no character of the data is taken for a lone surrogate (test262's
+// texts hold the ends of the private use ranges). The workers are threads, so each keeps the block of its line.
 import CorvusRegexEcma262
 import Foundation
 
@@ -29,38 +32,68 @@ struct Counts {
     }
 }
 
-// The line with each lone surrogate escape written as the escape of its Plane 15 code point.
+// An escaped backslash, a surrogate pair's escapes, or a lone surrogate's escape.
 let surrogateEscape = try! NSRegularExpression(
     pattern: #"\\\\|\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})|\\u(d[89a-f][0-9a-f]{2})"#, options: [.caseInsensitive])
 
-func readable(_ line: String) -> String {
-    if line.range(of: #"\\udb8[01]"#, options: [.regularExpression, .caseInsensitive]) != nil
-        || line.unicodeScalars.contains(where: { $0.value >= 0xF0000 && $0.value <= 0xF07FF })
-    {
-        fatalError("the data uses U+F0000-U+F07FF, which the runner reads lone surrogates as")
-    }
+// The first code point of each block a line's lone surrogates may be read as.
+let blocks: [UInt32] = Array(stride(from: 0xF0000, through: 0xFF000, by: 0x800)) + Array(stride(from: 0x100000, through: 0x10F000, by: 0x800))
+
+// The block of the line this thread is judging.
+func block() -> UInt32 { Thread.current.threadDictionary["corvus.loneBlock"] as? UInt32 ?? 0xF0000 }
+
+func isLone(_ v: UInt32) -> Bool { let b = block(); return v >= b && v < b + 0x800 }
+
+// The line with each lone surrogate escape written as the escape of a code point of a block, and how many were.
+func rewrite(_ line: String, _ block: UInt32) -> (String, Int) {
     let ns = line as NSString
     var out = ""
     var last = 0
+    var written = 0
     for m in surrogateEscape.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
         let lone = m.range(at: 3)
         guard lone.location != NSNotFound else { continue }
         out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-        let v = 0xF0000 + Int(ns.substring(with: lone), radix: 16)! - 0xD800 - 0x10000
+        let v = Int(block) + Int(ns.substring(with: lone), radix: 16)! - 0xD800 - 0x10000
         out += String(format: "\\u%04x\\u%04x", 0xD800 + (v >> 10), 0xDC00 + (v & 0x3FF))
         last = m.range.location + m.range.length
+        written += 1
     }
     out += ns.substring(from: last)
-    return out
+    return (out, written)
+}
+
+// How many code points of a block the strings of a value hold.
+func count(in value: Any, _ block: UInt32) -> Int {
+    switch value {
+    case let s as String: return s.unicodeScalars.reduce(0) { $0 + ($1.value >= block && $1.value < block + 0x800 ? 1 : 0) }
+    case let a as [Any]: return a.reduce(0) { $0 + count(in: $1, block) }
+    case let d as [String: Any]: return d.reduce(0) { $0 + count(in: $1.key, block) + count(in: $1.value, block) }
+    default: return 0
+    }
+}
+
+// The record of a line, its lone surrogates read as code points of the first block the line does not use.
+func read(_ line: String) -> [String: Any] {
+    for b in blocks {
+        let (text, written) = rewrite(line, b)
+        let r = try! JSONSerialization.jsonObject(with: text.data(using: .utf8)!) as! [String: Any]
+        if count(in: r, b) == written {
+            Thread.current.threadDictionary["corvus.loneBlock"] = b
+            return r
+        }
+    }
+    fatalError("every block of Planes 15 and 16 is used by the line")
 }
 
 // The UTF-16 code units of a text as read.
 func units(_ s: String) -> [UInt16] {
+    let b = block()
     var out: [UInt16] = []
     for c in s.unicodeScalars {
         let v = c.value
-        if v >= 0xF0000 && v <= 0xF07FF {
-            out.append(UInt16(0xD800 + v - 0xF0000))
+        if v >= b && v < b + 0x800 {
+            out.append(UInt16(0xD800 + v - b))
         } else {
             out.append(contentsOf: String(c).utf16)
         }
@@ -68,11 +101,11 @@ func units(_ s: String) -> [UInt16] {
     return out
 }
 
-func lone(_ s: String) -> Bool { s.unicodeScalars.contains { $0.value >= 0xF0000 && $0.value <= 0xF07FF } }
+func lone(_ s: String) -> Bool { s.unicodeScalars.contains { isLone($0.value) } }
 
 // UTF-8, a lone surrogate as U+FFFD (as String::from_utf16_lossy writes it).
 func utf8Lossy(_ s: String) -> String {
-    String(String.UnicodeScalarView(s.unicodeScalars.map { ($0.value >= 0xF0000 && $0.value <= 0xF07FF) ? "\u{FFFD}" : $0 }))
+    String(String.UnicodeScalarView(s.unicodeScalars.map { isLone($0.value) ? "\u{FFFD}" : $0 }))
 }
 
 func escape(_ s: String) -> String {
@@ -317,8 +350,7 @@ func judgeLines(_ name: String, _ lines: ArraySlice<Substring>) -> (Counts, [Str
     var w: [String] = []
     var records = 0, skipped = 0
     for line in lines where !line.isEmpty {
-        let data = readable(String(line)).data(using: .utf8)!
-        let r = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let r = read(String(line))
         if r["v8_deviation"] as? Bool == true { skipped += 1; continue }
         records += 1
         guard let pattern = r["pattern"] as? String else { continue }
