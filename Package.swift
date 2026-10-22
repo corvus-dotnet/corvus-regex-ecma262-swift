@@ -7,8 +7,8 @@ import PackageDescription
 #if canImport(Darwin)
 let cLibrary: Target = .binaryTarget(
     name: "CCorvusRegexEcma262",
-    url: "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v0.1.3/CorvusRegexEcma262.xcframework.zip",
-    checksum: "2df261108c4f0670681a93c622de07697d4d52799964fc8257fbe2031426ee3f"
+    url: "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v0.2.0/CorvusRegexEcma262.xcframework.zip",
+    checksum: "fcf3e5cde346833ed5e4c5a7faa4b8b9d6a6e5cc1a338127cae99b2988abe691"
 )
 #else
 let cLibrary: Target = .systemLibrary(
