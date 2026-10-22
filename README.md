@@ -15,8 +15,9 @@ library's release archive for the platform).
   surrogates and all. A pattern answers as it does in a browser or Node, which `NSRegularExpression` and Swift's
   `Regex` do not: `^` and `$`, `.`, `\d`, `\w`, `\b`, case folding, `\p{...}` and the rest read as JavaScript reads
   them.
-- A pattern without a backreference is matched in time proportional to its size times the text, and `test` and
-  `firstMatch` take a timeout, so neither a pattern nor a text from outside can make a program hang.
+- A pattern without a backreference is matched in time proportional to its size times the text, and a pattern can be
+  given a match timeout, as a `Regex` of .NET can, which every method honours and which caps the backtracking memory
+  too, so with a timeout neither a pattern nor a text from outside can make a program hang.
 
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
 about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among
@@ -73,7 +74,8 @@ try Regex(#"\s*(;)\s*"#).split("a ; b;c")                     // ["a", ";", "b",
 
 | | |
 |---|---|
-| `Regex(pattern, flags: "")` | Compiles a pattern as `new RegExp(pattern, flags)` does. |
+| `Regex(pattern, flags: "", timeout: nil)` | Compiles a pattern as `new RegExp(pattern, flags)` does. `timeout` is the match timeout in seconds (0 for none; `nil` for the default). |
+| `Regex.defaultTimeout` | The timeout of every pattern compiled without one: `nil` (no limit) unless set. |
 | `Regex.isValid(pattern, flags: "")` | Whether a pattern is valid, without compiling it. |
 | `test(text, from:, timeout:)` | `RegExp.prototype.test` with `lastIndex` at `from` (at `from` alone with `y`). |
 | `firstMatch(in: text, from:, timeout:)` | The first match at or after `from`, as `exec` finds it: a `Match`, or `nil`. |
@@ -82,7 +84,7 @@ try Regex(#"\s*(;)\s*"#).split("a ; b;c")                     // ["a", ";", "b",
 | `replace(in: text, with: template)`, `replace(in: text) { m in ... }` | `String.prototype.replace`: the first match, or every match with `g`. |
 | `replaceAll(in: text, with: template)`, `replaceAll(in: text) { m in ... }` | `String.prototype.replaceAll`: every match. |
 | `split(text, limit:)` | `String.prototype.split`: the pieces, `nil` for a group that did not take part. |
-| `source`, `flags`, `groupCount`, `groupNames` | What the pattern is. |
+| `source`, `flags`, `timeout`, `groupCount`, `groupNames` | What the pattern is. |
 | `libraryVersion` | The C library's version. |
 
 Each member has a `utf16:` form over `[UInt16]` (`test(utf16:)`, `firstMatch(utf16:)`, `matches(utf16:)` and so on),
@@ -99,6 +101,12 @@ JavaScript. A replacement that splits a character puts U+FFFD for the half left 
 
 **Errors.** Each is a `RegexError`, whose `kind` is `.invalidPattern`, `.invalidFlags`, `.patternTooLarge` or
 `.matchLimit` (a match that reached its timeout or its cap on backtracking memory), and whose `message` says why.
+
+**Timeouts.** A pattern has a match timeout, as a `Regex` of .NET has: `Regex(pattern, flags: "u", timeout: 1)`, or for
+every pattern compiled after it `Regex.defaultTimeout = 1`. Every method that matches gives each of its matches the
+timeout and throws a `.matchLimit` error at it; `test` and `firstMatch` take a `timeout:` of their own in its place.
+Without a timeout (the default) a match has no limit of time or of memory, so a program that matches a pattern or a
+text it did not write should set one.
 
 **Threads.** A `Regex` is immutable and `Sendable`, and may be used from any number of threads.
 
