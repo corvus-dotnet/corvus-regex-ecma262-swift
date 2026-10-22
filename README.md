@@ -29,7 +29,7 @@ Add the package to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/corvus-dotnet/corvus-regex-ecma262-swift", from: "0.1.2"),
+    .package(url: "https://github.com/corvus-dotnet/corvus-regex-ecma262-swift", from: "0.1.3"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "CorvusRegexEcma262", package: "corvus-regex-ecma262-swift")]),
