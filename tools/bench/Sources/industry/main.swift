@@ -255,7 +255,9 @@ for e in engines {
         let count = fig.line["count"] as? Int
         var entry: [String: Any] = ["median": (m * 10).rounded() / 10, "min": sorted[0], "max": sorted[n - 1],
                                     "count": count as Any, "rounds": n, "spread": (spread * 10000).rounded() / 10000, "each": fig.each]
-        if let oracle = figures["v8"]?[k]?.line["count"] as? Int, let count, count != oracle, e != "v8" {
+        // Without V8 in the run (V8=0), its count as the workloads carry it (v8Count, from the central run).
+        let oracle = figures["v8"] != nil ? figures["v8"]?[k]?.line["count"] as? Int : workloads[k]["v8Count"] as? Int
+        if let oracle, let count, count != oracle, e != "v8" {
             differ.append("\(e) \(wid) \(count) vs V8 \(oracle)")
             FileHandle.standardError.write("COUNT  \(e) \(wid) \(count) against V8's \(oracle)\n".data(using: .utf8)!)
             if notECMA262.contains(e) {
