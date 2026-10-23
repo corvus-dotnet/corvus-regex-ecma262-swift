@@ -10,8 +10,9 @@
 // own (`industry --one`, or `node industry.mjs --one` for V8), which warms for two fifths of its seconds, then times
 // `passes` passes of as many counts as fit the rest and reports their median. A workload's figure for an engine is the
 // median of its rounds, with the fastest and the slowest round as its spread; a figure whose spread, (slowest -
-// fastest) / median, is over --spread is listed in the run's facts (spread_over) and on stderr. A child that does not
-// finish in two minutes is stopped and recorded as such.
+// fastest) / median, is over --spread is listed in the run's facts (spread_over) and on stderr. A figure that does not
+// finish in 30 s is stopped and recorded as giving no result within 30 s, and is not run in the workload's later
+// rounds.
 //
 // The engines, each counting the matches of a global search as a Swift program counts them:
 // - corvus-utf8 and corvus-utf16: this package with the workload's flags and u, over the text as a String and as
@@ -136,6 +137,11 @@ func one(_ path: String, _ index: Int, _ engine: String, _ seconds: Double, _ pa
     }
 }
 
+// A figure stopped at the limit, which the page shows as giving no result within 30 s.
+let stopped: [String: Any] = ["error": "did not produce a result within 30 s", "limit": 30]
+
+func isStopped(_ line: [String: Any]?) -> Bool { (line?["limit"] as? Int) == 30 }
+
 // One figure in a child process: the child's line of JSON, or one with the error.
 func figure(_ v8: String?, _ path: String, _ index: Int, _ spec: String, _ seconds: String, _ passes: String) -> [String: Any] {
     let parts = spec.split(separator: "@", maxSplits: 1).map(String.init)
@@ -161,10 +167,10 @@ func figure(_ v8: String?, _ path: String, _ index: Int, _ spec: String, _ secon
         output.data = pipe.fileHandleForReading.readDataToEndOfFile()
         done.signal()
     }
-    if done.wait(timeout: .now() + 120) == .timedOut {
+    if done.wait(timeout: .now() + 30) == .timedOut {
         p.terminate()
         kill(p.processIdentifier, SIGKILL)
-        return ["error": "did not finish in two minutes"]
+        return stopped
     }
     p.waitUntilExit()
     guard let line = String(decoding: output.data, as: UTF8.self).split(separator: "\n").last,
@@ -218,6 +224,8 @@ for (c, k) in chosen.enumerated() {
     for round in 0..<rounds {
         for turn in 0..<engines.count {
             let e = engines[(turn + round) % engines.count]
+            // A figure stopped at the limit in an earlier round is not run again.
+            if isStopped(figures[e]?[k]?.line) { continue }
             let line = figure(opts["v8"], path, k, e, opts["seconds"]!, opts["passes"]!)
             var fig = figures[e, default: [:]][k] ?? (each: [], line: line)
             fig.line = line

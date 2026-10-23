@@ -11,6 +11,9 @@
 // Records marked v8_deviation are left out. Any difference from V8 is a wrong answer; a refusal of a valid pattern, an
 // acceptance of an invalid one, and a match that reaches its limit are counted apart and listed too. captures.jsonl is
 // judged on exec, the global search, the sticky flag, replace and split. A match is given 2 seconds.
+// ill-formed-utf8.jsonl holds bytes that are not UTF-8, each one answer over UTF-8 under each grammar the pattern is
+// valid in, whose right answer is a refusal: a String cannot hold such bytes, so they are refused where they would
+// become one (checked as the standard library decodes UTF-8, stopping at the first error), before the package.
 //
 // JSONSerialization refuses a lone surrogate, which the data holds, so each lone surrogate escape is read as a code
 // point of a block of 2,048 private use code points (the block's first + its offset from U+D800) and turned back into
@@ -205,6 +208,59 @@ func judgeTests(_ name: String, _ r: [String: Any], _ pattern: String, _ c: inou
     }
 }
 
+// The String of bytes that are UTF-8, or nil: the standard library's decoder, which stops at the first ill-formed
+// sequence (an overlong form, an encoded surrogate, a value beyond U+10FFFF, a sequence cut short or a stray byte).
+func utf8String(_ bytes: [UInt8]) -> String? {
+    var scalars = String.UnicodeScalarView()
+    let failed = transcode(bytes.makeIterator(), from: UTF8.self, to: UTF32.self, stoppingOnError: true) {
+        scalars.append(Unicode.Scalar($0)!)
+    }
+    return failed ? nil : String(scalars)
+}
+
+func judgeIllFormed(_ r: [String: Any], _ pattern: String, _ c: inout Counts, _ w: inout [String]) {
+    let name = "ill-formed-utf8.jsonl"
+    let flags = r["flags"] as? String ?? ""
+    let headPattern = shown(pattern)
+    for (suffix, _, valid) in modes(r) {
+        let modeFlags = flags + suffix
+        let head = "\(name)\t/\(headPattern)/\(modeFlags)"
+        let re: Regex
+        switch compile(pattern, modeFlags) {
+        case .refused(let message, let isError):
+            if isError { c.errors += 1 }
+            if valid {
+                c.refused += 1
+                w.append("REFUSED\t\(head)\t\(message.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")")
+            }
+            continue
+        case .regex(let compiled): re = compiled
+        }
+        if !valid {
+            c.accepted += 1
+            w.append("ACCEPTED-INVALID\t\(head)")
+            continue
+        }
+        for test in r["tests"] as? [[String: Any]] ?? [] {
+            guard let hex = test["bytes"] as? String else { continue }
+            var bytes: [UInt8] = []
+            var i = hex.startIndex
+            while i < hex.endIndex {
+                let j = hex.index(i, offsetBy: 2)
+                bytes.append(UInt8(hex[i..<j], radix: 16)!)
+                i = j
+            }
+            guard let text = utf8String(bytes) else {
+                c.right += 1
+                continue
+            }
+            // Not reached with the data, whose bytes are never UTF-8; were they, the package would answer.
+            c.wrong += 1
+            w.append("WRONG\t\(head)\t\(hex)\tutf8\tread as UTF-8 (\((try? re.test(text, timeout: limit)).map(String.init(describing:)) ?? "error")), not refused")
+        }
+    }
+}
+
 // The expected [start, end] of each group (nil for one that did not take part), mapped by map (identity when nil).
 func spansOf(_ expected: Any?) -> [[Int]?]? {
     guard let a = expected as? [Any] else { return nil }
@@ -354,7 +410,13 @@ func judgeLines(_ name: String, _ lines: ArraySlice<Substring>) -> (Counts, [Str
         if r["v8_deviation"] as? Bool == true { skipped += 1; continue }
         records += 1
         guard let pattern = r["pattern"] as? String else { continue }
-        if name == "captures.jsonl" { judgeCaptures(r, pattern, &c, &w) } else { judgeTests(name, r, pattern, &c, &w) }
+        if name == "captures.jsonl" {
+            judgeCaptures(r, pattern, &c, &w)
+        } else if name == "ill-formed-utf8.jsonl" {
+            judgeIllFormed(r, pattern, &c, &w)
+        } else {
+            judgeTests(name, r, pattern, &c, &w)
+        }
     }
     return (c, w, records, skipped)
 }
