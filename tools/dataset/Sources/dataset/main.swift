@@ -285,7 +285,8 @@ func same(_ expected: [[Int]?]?, _ got: [Range<Int>?]?, _ map: [Int]?) -> Bool {
 func judgeAll(_ found: [Range<Int>], _ all: [[[Int]?]?], _ map: [Int]?) -> Bool {
     var n = 0
     for m in found {
-        if n >= all.count { break }
+        // One match more than the data has: wrong, unless the data kept only the first twenty.
+        if n >= all.count { return all.count == 20 }
         guard let a = all[n], let e = a[0] else { return false }
         let want = map.map { $0[e[0]]..<$0[e[1]] } ?? e[0]..<e[1]
         if m != want { return false }
@@ -334,7 +335,7 @@ func judgeMode(_ whereText: String, _ a: [String: Any], _ text: String, _ re: Re
     var ok = true
     var n = 0
     for mm in found16 {
-        if n >= all.count { break }
+        if n >= all.count { ok = ok && all.count == 20; break }
         if !same(all[n], mm.ranges, nil) { ok = false; break }
         n += 1
     }
