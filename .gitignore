@@ -2,3 +2,4 @@
 .swiftpm/
 Package.resolved
 /*.xcodeproj
+__pycache__/

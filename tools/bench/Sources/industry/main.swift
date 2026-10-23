@@ -18,7 +18,8 @@
 // - corvus-utf8 and corvus-utf16: this package with the workload's flags and u, over the text as a String and as
 //   [UInt16], with Regex.matchCount;
 // - foundation: Foundation's NSRegularExpression (ICU), which does not claim ECMA-262, given the pattern as it is with
-//   the flags i, m and s, with numberOfMatches;
+//   the flags i, m and s, with numberOfMatches. Its only subject is a String, which swift-corelibs-foundation copies
+//   into UTF-16 for ICU on every call, so that copy is part of each of its counts (about 2 ns a character);
 // - swift: the standard library's Regex, which does not claim ECMA-262, given the pattern as it is with the flags i, m
 //   and s, counting matches(of:);
 // - v8: Node's RegExp (--v8), with gu added.
@@ -114,6 +115,10 @@ func one(_ path: String, _ index: Int, _ engine: String, _ seconds: Double, _ pa
             if flags.contains("s") { options.insert(.dotMatchesLineSeparators) }
             let re = try NSRegularExpression(pattern: pattern, options: options)
             let range = NSRange(location: 0, length: (text as NSString).length)
+            // numberOfMatches takes a String alone. On Linux every String is native UTF-8, and CFRegularExpression copies
+            // it into UTF-16 for ICU on each call. A String made from UTF-16 units, or from an NSString made from them,
+            // is native UTF-8 again by the time it is passed, and counts no faster. There is no public way to hand it
+            // the UTF-16 once, as this harness hands it to corvus-utf16.
             count = { re.numberOfMatches(in: text, range: range) }
         case "swift":
             if #available(macOS 13, *) {
