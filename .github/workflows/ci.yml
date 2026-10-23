@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  CRE_VERSION: 0.2.0
+  CRE_VERSION: 0.2.1
 
 jobs:
   linux:
@@ -27,11 +27,11 @@ jobs:
         - arch: x64
           os: ubuntu-24.04
           target: x86_64-unknown-linux-gnu
-          sha256: 019d911d3713d6f6a3642c3769f828ff35ba02b25738574771ed7ccb30f1644b
+          sha256: 3b292ba2dac7828b84a0102bdf8463b5c04093f7849efab2b606e5756c39ac49
         - arch: arm64
           os: ubuntu-24.04-arm
           target: aarch64-unknown-linux-gnu
-          sha256: a9a38cbe2c16518dab2d64af37bd6e32d6b8addd13e282d84137414f57b1878b
+          sha256: bebc0379f23754b1674eed3b079d98c4d825dcda85b0af15f432a11802e2f332
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -59,13 +59,13 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         repository: corvus-dotnet/ecma262-regex-test-data
-        ref: e3aca31c962f81602daaad5abd38a1ed80e263ac
+        ref: 2b32a261928e80e830d9db9587c675a336989689
         path: ecma262-regex-test-data
         persist-credentials: false
     - name: The C library's release archive
       run: |
         curl -sSfL -o cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-        echo "019d911d3713d6f6a3642c3769f828ff35ba02b25738574771ed7ccb30f1644b  cre.tar.gz" | sha256sum -c -
+        echo "3b292ba2dac7828b84a0102bdf8463b5c04093f7849efab2b606e5756c39ac49  cre.tar.gz" | sha256sum -c -
         mkdir -p "$RUNNER_TEMP/cre" && tar -xzf cre.tar.gz -C "$RUNNER_TEMP/cre" --strip-components 1
     - name: Run the ECMA-262 test data
       run: |

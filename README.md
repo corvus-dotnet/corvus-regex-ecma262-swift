@@ -20,9 +20,9 @@ library's release archive for the platform).
   too, so with a timeout neither a pattern nor a text from outside can make a program hang.
 
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
-about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among them,
+about 123,087 patterns and 6,056,699 texts, test262's and `exec`, the global search, `replace` and `split` among them,
 and texts of bytes that are not UTF-8, which it refuses), through this package over `[UInt16]` and `String`, it gives
-26,953,709 right answers and none wrong, refuses no valid pattern, accepts no invalid one and reaches no limit. CI runs
+29,289,554 right answers and none wrong, refuses no valid pattern, accepts no invalid one and reaches no limit. CI runs
 the whole data on Linux.
 
 ## Install
@@ -130,8 +130,8 @@ a directory named `corvus-regex-ecma262-swift` (a clone's default).
 
 A release is a GitHub release tagged `v<version>` (SwiftPM reads the version past the `v`). Before it, set the
 XCFramework's URL and checksum in `Package.swift` to those of the C library release it is built on (the checksum is
-the `.sha256` file attached beside the XCFramework), and the version in the Dockerfile and in CI. The release
-publishes the harness image with the release's tag.
+the `.sha256` file attached beside the XCFramework), and the version and each archive's SHA-256 in the Dockerfile and
+in CI. The release publishes the harness image with the release's tag.
 
 ## Licence
 
