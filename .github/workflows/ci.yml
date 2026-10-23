@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  CRE_VERSION: 0.2.0
+  CRE_VERSION: 0.2.1
 
 jobs:
   linux:
