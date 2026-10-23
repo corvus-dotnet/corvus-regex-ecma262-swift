@@ -155,7 +155,7 @@ data = {
                  + ([["Counts", "NSRegularExpression or Swift Regex counts otherwise than V8 on " + str(len(differs)) + " workloads (each says so)"]] if differs else []),
         "method": "<p>Each figure is one count of every match a global search finds over the whole text, as a Swift program counts them. "
                   "This package runs with the workload's flags and u, over the text as a String (UTF-8) and as [UInt16], with matchCount; "
-                  "Foundation's NSRegularExpression (ICU), with numberOfMatches, and Swift's Regex, counting matches(of:), with the pattern as it is and the flags i, m and s; V8 with gu added.</p>",
+                  "Foundation's NSRegularExpression (ICU), with numberOfMatches, which copies the String into UTF-16 for ICU on every call, and Swift's Regex, counting matches(of:), with the pattern as it is and the flags i, m and s; V8 with gu added.</p>",
     },
     "vocab": {
         "impl": "engine", "impls": "engines", "Impls": "Engines",
