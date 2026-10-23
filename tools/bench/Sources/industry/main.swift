@@ -1,5 +1,5 @@
 // The Industry benchmark from Swift: each workload counted by each engine, in nanoseconds per count, under the
-// interleaved protocol every Corvus ECMA-262 engine's harness follows (docs/benchmarks/README.md in
+// interleaved protocol every harness of the central benchmark page follows (docs/benchmarks/README.md in
 // corvus-regex-ecma262-rs), a port of the C harness's driver (tools/c/industry.c there):
 //
 //   industry <workloads.json> [--engines corvus-utf8,corvus-utf16,foundation,swift,v8] [--v8 <industry.mjs>]
