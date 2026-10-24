@@ -2,7 +2,7 @@
 // judged by the data's own rule ("How a runner judges an engine" in its README) exactly as the C library's runner
 // judges it:
 //
-//   swift run -c release dataset <data directory> <wrong-cases file> [--files <glob>]
+//   swift run -c release dataset <data directory> <wrong-cases file> [--files <glob>] [--compliance <file>]
 //
 // Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the unicode
 // answers), the record's flags alone (the legacy answers) and, in the file that has them, the flags with v added (the
@@ -14,6 +14,17 @@
 // ill-formed-utf8.jsonl holds bytes that are not UTF-8, each one answer over UTF-8 under each grammar the pattern is
 // valid in, whose right answer is a refusal: a String cannot hold such bytes, so they are refused where they would
 // become one (checked as the standard library decodes UTF-8, stopping at the first error), before the package.
+//
+// exec/test262.jsonl, the exec calls of test262 (in a directory of its own), is judged last: each call one exec with the
+// record's flags from its lastIndex, right when the positions of the match and of every group, the named groups and,
+// with g or y, the lastIndex after are V8's; one answer over [UInt16] and, when the text holds no lone surrogate and
+// lastIndex is not between the halves of a pair, one over the String with positions in UTF-8 bytes. Over the String a
+// name's group is read through Match.range(name), which gives a bound between the halves of a character as the whole
+// character's, so the answer's bounds are read the same way there; every group's exact bounds are checked by number.
+//
+// With --compliance <file>, the engine's compliance object is written to the file, as the benchmark page reads it
+// (docs/implementing-a-source.md in corvus-regex-ecma262-benchmarks): the counts, this runner and the calls it makes in
+// each encoding, and what it leaves out, which for this package is nothing.
 //
 // JSONSerialization refuses a lone surrogate, which the data holds, so each lone surrogate escape is read as a code
 // point of a block of 2,048 private use code points (the block's first + its offset from U+D800) and turned back into
@@ -402,6 +413,131 @@ func judgeCaptures(_ r: [String: Any], _ pattern: String, _ c: inout Counts, _ w
     }
 }
 
+let execFile = "exec/test262.jsonl"
+
+// A call's lastIndex. Past the end of the text exec gives null; test262 sets it as far as 2^53 - 1 and Number.MAX_VALUE,
+// so anything past the end reads as the text's length plus one.
+func lastIndexOf(_ t: [String: Any], _ length: Int) -> Int {
+    let v = (t["lastIndex"] as? NSNumber)?.doubleValue ?? 0
+    return v > Double(length) ? length + 1 : Int(v)
+}
+
+// Whether a position is between the halves of a surrogate pair, where UTF-8 has no position.
+func insidePair(_ u: [UInt16], _ at: Int) -> Bool {
+    at > 0 && at < u.count && (0xDC00...0xDFFF).contains(u[at]) && (0xD800...0xDBFF).contains(u[at - 1])
+}
+
+// Whether a match (nil for none) is the call's answer: both null, or the same groups, the same named groups (present
+// exactly when the pattern has names) and, with g or y, a lastIndex after at the match's end. group and named read the
+// match's group by number and by name, and map takes the answer's UTF-16 positions to the match's (named, those of a
+// name's group).
+func sameExec(_ answer: Any?, found: Bool, count: Int, group: (Int) -> Range<Int>?, named: (String) -> Range<Int>?,
+              names: [String], carries: Bool, map: (Int) -> Int, mapNamed: (Int, Bool) -> Int) -> Bool {
+    guard let a = answer as? [String: Any] else { return !found && answer is NSNull }
+    guard found, let captures = a["captures"] as? [Any], captures.count == count else { return false }
+    for (g, e) in captures.enumerated() {
+        if let b = e as? [NSNumber] {
+            guard group(g) == map(b[0].intValue)..<map(b[1].intValue) else { return false }
+        } else if group(g) != nil {
+            return false
+        }
+    }
+    if let groups = a["groups"] as? [String: Any] {
+        guard groups.keys.sorted() == names.sorted() else { return false }
+        for (n, e) in groups {
+            if let b = e as? [NSNumber] {
+                guard named(n) == mapNamed(b[0].intValue, false)..<mapNamed(b[1].intValue, true) else { return false }
+            } else if named(n) != nil {
+                return false
+            }
+        }
+    } else if !names.isEmpty {
+        return false
+    }
+    return !carries || (a["lastIndex"] as? NSNumber).map { map($0.intValue) } == group(0)?.upperBound
+}
+
+// A record of exec/test262.jsonl: the pattern with its own flags (g, y and d among them), from each call's lastIndex.
+func judgeExec(_ r: [String: Any], _ pattern: String, _ c: inout Counts, _ w: inout [String]) {
+    let flags = r["flags"] as? String ?? ""
+    let re: Regex
+    switch compile(pattern, flags) {
+    case .regex(let x): re = x
+    case .refused(let why, _):
+        c.refused += 1
+        w.append("REFUSED\t\(execFile)\t/\(shown(pattern))/\(flags)\t\(why)")
+        return
+    }
+    let carries = flags.contains("g") || flags.contains("y")
+    for case let t as [String: Any] in r["tests"] as? [Any] ?? [] {
+        if t["v8_deviation"] as? Bool == true { continue }
+        let text = t["text"] as? String ?? ""
+        let u = units(text)
+        let start = carries ? lastIndexOf(t, u.count) : 0
+        let answer = t["answer"]
+        let whereText = "/\(shown(pattern))/\(flags)\t\(escape(text))\t\(t["lastIndex"] ?? "")"
+        func count(_ encoding: String, _ outcome: Bool?) {
+            switch outcome {
+            case true?: c.right += 1
+            case false?:
+                c.wrong += 1
+                w.append("WRONG\t\(execFile)\t\(whereText)\t\(encoding)")
+            case nil:
+                c.limited += 1
+                w.append("LIMIT\t\(execFile)\t\(whereText)\t\(encoding)")
+            }
+        }
+        do {
+            let m = start > u.count ? nil : try re.firstMatch(utf16: u, from: start, timeout: limit)
+            count("utf16", sameExec(answer, found: m != nil, count: m?.count ?? 0, group: { m?.range($0) },
+                                    named: { m?.range($0) }, names: re.groupNames, carries: carries,
+                                    map: { $0 }, mapNamed: { k, _ in k }))
+        } catch {
+            count("utf16", nil)
+        }
+        if lone(text) || insidePair(u, start) { continue }
+        let byteAt = byteOffsets(text)
+        // A bound between the halves of a character as Match.range(name) gives it: the character's start for a start,
+        // its end for an end.
+        func rounded(_ k: Int, _ end: Bool) -> Int {
+            insidePair(u, k) ? (end ? byteAt[k] + 2 : byteAt[k] - 2) : byteAt[k]
+        }
+        do {
+            let m = start > u.count ? nil
+                : try re.firstMatch(in: text, from: text.utf8.index(text.utf8.startIndex, offsetBy: byteAt[start]), timeout: limit)
+            let offset = { (i: String.Index) in text.utf8.distance(from: text.utf8.startIndex, to: i) }
+            count("utf8", sameExec(answer, found: m != nil, count: m?.count ?? 0,
+                                   group: { g in m.flatMap { g < $0.utf8Ranges.count ? $0.utf8Ranges[g] : nil } },
+                                   named: { n in m?.range(n).map { offset($0.lowerBound)..<offset($0.upperBound) } },
+                                   names: re.groupNames, carries: carries, map: { byteAt[$0] }, mapNamed: rounded))
+        } catch {
+            count("utf8", nil)
+        }
+    }
+}
+
+// The engine's compliance as the benchmark page reads it: the counts, this runner and the calls it makes in each
+// encoding, and what it leaves out.
+func writeCompliance(_ path: String, _ t: Counts) throws {
+    let object: [String: Any] = [
+        "right": t.right, "wrong": t.wrong, "refused": t.refused, "acceptedInvalid": t.accepted,
+        "limited": t.limited + t.errors,
+        "judge": [
+            "runner": "https://github.com/corvus-dotnet/corvus-regex-ecma262-swift/blob/main/tools/dataset/Sources/dataset/main.swift",
+            "calls": [
+                "utf16": ["test(utf16:)", "firstMatch(utf16:from:timeout:)", "matches(utf16:)", "replace(utf16:with:)",
+                          "replaceAll(utf16:with:)", "split(utf16:)"].map { "Regex.\($0)" },
+                "utf8": ["test(_:)", "firstMatch(in:from:timeout:)", "matches(in:)", "replace(in:with:)",
+                         "replaceAll(in:with:)"].map { "Regex.\($0)" },
+            ],
+        ],
+        "excludes": [Any](),
+    ]
+    var data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+    data.append(0x0A)
+    try data.write(to: URL(fileURLWithPath: path))
+}
+
 func judgeLines(_ name: String, _ lines: ArraySlice<Substring>) -> (Counts, [String], Int, Int) {
     var c = Counts()
     var w: [String] = []
@@ -411,7 +547,9 @@ func judgeLines(_ name: String, _ lines: ArraySlice<Substring>) -> (Counts, [Str
         if r["v8_deviation"] as? Bool == true { skipped += 1; continue }
         records += 1
         guard let pattern = r["pattern"] as? String else { continue }
-        if name == "captures.jsonl" {
+        if name == execFile {
+            judgeExec(r, pattern, &c, &w)
+        } else if name == "captures.jsonl" {
             judgeCaptures(r, pattern, &c, &w)
         } else if name == "ill-formed-utf8.jsonl" {
             judgeIllFormed(r, pattern, &c, &w)
@@ -424,13 +562,22 @@ func judgeLines(_ name: String, _ lines: ArraySlice<Substring>) -> (Counts, [Str
 
 let args = CommandLine.arguments
 guard args.count >= 3 else {
-    FileHandle.standardError.write("usage: dataset <data directory> <wrong-cases file> [--files glob]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: dataset <data directory> <wrong-cases file> [--files glob] [--compliance file]\n".data(using: .utf8)!)
     exit(2)
 }
 let directory = args[1], wrongPath = args[2]
-let filesGlob = args.count >= 5 && args[3] == "--files" ? args[4] : "*.jsonl"
-let files = try FileManager.default.contentsOfDirectory(atPath: directory)
+func option(_ name: String) -> String? {
+    guard let k = args.firstIndex(of: name), k + 1 < args.count else { return nil }
+    return args[k + 1]
+}
+let filesGlob = option("--files") ?? "*.jsonl"
+let compliance = option("--compliance")
+var files = try FileManager.default.contentsOfDirectory(atPath: directory)
     .filter { $0.hasSuffix(".jsonl") && fnmatch(filesGlob, $0, 0) == 0 }.sorted()
+// The exec calls of test262, in a directory of their own: with the default filter, or one that names them.
+if (filesGlob == "*.jsonl" || filesGlob.hasPrefix("exec")) && FileManager.default.fileExists(atPath: "\(directory)/\(execFile)") {
+    files.append(execFile)
+}
 var total = Counts()
 var wrong: [String] = []
 var records = 0, skipped = 0
@@ -463,6 +610,7 @@ for name in files {
     total.add(fileTotal)
 }
 try wrong.sorted().map { $0 + "\n" }.joined().write(toFile: wrongPath, atomically: true, encoding: .utf8)
+if let compliance { try writeCompliance(compliance, total) }
 print(String(format: "\nrecords %d (skipped %d deviations)  right %d  wrong %d  refused-valid %d  accepted-invalid %d  limit %d  errors %d  in %.1fs",
              records, skipped, total.right, total.wrong, total.refused, total.accepted, total.limited, total.errors,
              Date().timeIntervalSince(start)))
