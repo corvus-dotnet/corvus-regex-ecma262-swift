@@ -23,7 +23,8 @@ library's release archive for the platform).
 about its patterns and texts, test262's patterns and `exec` calls, the global search, `replace` and `split` among them,
 and texts of bytes that are not UTF-8, which it refuses), through this package over `[UInt16]` and `String`, it gives
 every answer right and none wrong, refuses no valid pattern, accepts no invalid one and reaches no limit. CI runs
-the whole data on Linux.
+the whole data on Linux, and the data as its own scripts write it for Unicode 13 and 18 and for the grammar of
+ECMAScript 2020.
 
 ## Install
 
@@ -31,7 +32,7 @@ Add the package to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/corvus-dotnet/corvus-regex-ecma262-swift", from: "0.1.4"),
+    .package(url: "https://github.com/corvus-dotnet/corvus-regex-ecma262-swift", from: "0.2.3"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "CorvusRegexEcma262", package: "corvus-regex-ecma262-swift")]),
@@ -75,9 +76,9 @@ try Regex(#"\s*(;)\s*"#).split("a ; b;c")                     // ["a", ";", "b",
 
 | | |
 |---|---|
-| `Regex(pattern, flags: "", timeout: nil)` | Compiles a pattern as `new RegExp(pattern, flags)` does. `timeout` is the match timeout in seconds (0 for none; `nil` for the default). |
+| `Regex(pattern, flags: "", timeout: nil, edition: .current, unicodeVersion: .default)` | Compiles a pattern as `new RegExp(pattern, flags)` does. `timeout` is the match timeout in seconds (0 for none; `nil` for the default). `edition` and `unicodeVersion` are below. |
 | `Regex.defaultTimeout` | The timeout of every pattern compiled without one: `nil` (no limit) unless set. |
-| `Regex.isValid(pattern, flags: "")` | Whether a pattern is valid, without compiling it. |
+| `Regex.isValid(pattern, flags: "", edition: .current, unicodeVersion: .default)` | Whether a pattern is valid, without compiling it. |
 | `test(text, from:, timeout:)` | `RegExp.prototype.test` with `lastIndex` at `from` (at `from` alone with `y`). |
 | `firstMatch(in: text, from:, timeout:)` | The first match at or after `from`, as `exec` finds it: a `Match`, or `nil`. |
 | `matches(in: text)` | A global search as `matchAll` makes it: every `Match`. |
@@ -85,7 +86,8 @@ try Regex(#"\s*(;)\s*"#).split("a ; b;c")                     // ["a", ";", "b",
 | `replace(in: text, with: template)`, `replace(in: text) { m in ... }` | `String.prototype.replace`: the first match, or every match with `g`. |
 | `replaceAll(in: text, with: template)`, `replaceAll(in: text) { m in ... }` | `String.prototype.replaceAll`: every match. |
 | `split(text, limit:)` | `String.prototype.split`: the pieces, `nil` for a group that did not take part. |
-| `source`, `flags`, `timeout`, `groupCount`, `groupNames` | What the pattern is. |
+| `source`, `flags`, `timeout`, `edition`, `unicodeVersion`, `groupCount`, `groupNames` | What the pattern is. |
+| `Regex.unicodeVersions`, `Regex.defaultUnicodeVersion`, `Regex.latestUnicodeVersion` | The versions of Unicode the package carries, `[13, 17, 18]`, the default (17) and the latest (18). |
 | `libraryVersion` | The C library's version. |
 
 Each member has a `utf16:` form over `[UInt16]` (`test(utf16:)`, `firstMatch(utf16:)`, `matches(utf16:)` and so on),
@@ -107,7 +109,24 @@ JavaScript. A replacement that splits a character puts U+FFFD for the half left 
 every pattern compiled after it `Regex.defaultTimeout = 1`. Every method that matches gives each of its matches the
 timeout and throws a `.matchLimit` error at it; `test` and `firstMatch` take a `timeout:` of their own in its place.
 Without a timeout (the default) a match has no limit of time or of memory, so a program that matches a pattern or a
-text it did not write should set one.
+text it did not write should set one. There is no separate form that gives nil for an invalid pattern: `try?` is
+that form, and it takes a timeout as the constructor does, so a validator needs no default timeout.
+
+**The edition and the version of Unicode.** Two settings, each independent of the other, are settled when a pattern is
+compiled and cost a match nothing:
+
+- `edition: .es2020` reads the pattern with the grammar of ECMAScript 2020, which JSON Schema 2020-12 names. It refuses
+  what later editions added, and nothing else: the `d` and `v` flags (`.invalidFlags`), modifier groups such as
+  `(?i:...)`, a group name used by two groups, and a property name or value that is not in that edition's tables, such
+  as `\p{Script=Yezidi}` (each `.invalidPattern`). A pattern it accepts has the same answers as in today's grammar.
+  `.current`, the default, is today's grammar.
+- `unicodeVersion:` is the version of Unicode whose tables the pattern is read with: the members of each `\p{...}`,
+  the characters of a group name, and case folding. It is `.default` (the version of the V8 the answers are held to, 17
+  today), `.v13`, `.v17`, `.v18` or `.latest` (18 today). A `Regex`'s `unicodeVersion` gives the version it resolved to.
+
+```swift
+let schemaPattern = try? Regex(#"^\p{L}+$"#, flags: "u", timeout: 1, edition: .es2020, unicodeVersion: .v13)
+```
 
 **Threads.** A `Regex` is immutable and `Sendable`, and may be used from any number of threads.
 

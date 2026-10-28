@@ -1,7 +1,8 @@
 # The tests on Linux (x64 and arm64, over the C library's release archive found through pkg-config, as a user's build
 # finds it) and on macOS (over the XCFramework the C library's release attaches, as Package.swift names it), with
-# builds for iOS and the iOS simulator; and the ECMA-262 test data through this package on Linux. The data is pinned
-# to a commit; the pass is 0 wrong answers, 0 refusals of a valid pattern, 0 acceptances of an invalid one and 0
+# builds for iOS and the iOS simulator; and the ECMA-262 test data through this package on Linux, as it is and as the
+# data's own scripts write it for Unicode 13 and 18 and for the grammar of ECMAScript 2020. The data is pinned to a
+# commit; the pass is 0 wrong answers, 0 refusals of a valid pattern, 0 acceptances of an invalid one and 0
 # matches at their limit, over String and [UInt16].
 name: ci
 on:
@@ -15,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  CRE_VERSION: 0.2.1
+  CRE_VERSION: 0.2.3
 
 jobs:
   linux:
@@ -27,11 +28,11 @@ jobs:
         - arch: x64
           os: ubuntu-24.04
           target: x86_64-unknown-linux-gnu
-          sha256: 3b292ba2dac7828b84a0102bdf8463b5c04093f7849efab2b606e5756c39ac49
+          sha256: db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58
         - arch: arm64
           os: ubuntu-24.04-arm
           target: aarch64-unknown-linux-gnu
-          sha256: bebc0379f23754b1674eed3b079d98c4d825dcda85b0af15f432a11802e2f332
+          sha256: 34bc6162d468fa70a449f84a5376ba285d246b2a31f3c07247e31a845290c36b
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -59,25 +60,51 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         repository: corvus-dotnet/ecma262-regex-test-data
-        ref: cff0860b7ebc5eb9c801eb9f8cec9d5398688ff2
+        ref: 1b4c4353c4fa3fc3e318db32ef0261391519b9a5
         path: ecma262-regex-test-data
         persist-credentials: false
     - name: The C library's release archive
       run: |
         curl -sSfL -o cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-        echo "3b292ba2dac7828b84a0102bdf8463b5c04093f7849efab2b606e5756c39ac49  cre.tar.gz" | sha256sum -c -
+        echo "db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58  cre.tar.gz" | sha256sum -c -
         mkdir -p "$RUNNER_TEMP/cre" && tar -xzf cre.tar.gz -C "$RUNNER_TEMP/cre" --strip-components 1
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: '24.22.1'
+    - name: Write the data for other versions of Unicode and for ECMAScript 2020
+      # The data as its own scripts write it for Unicode 13 and 18 (unicode.js apply) and for the grammar of ECMAScript
+      # 2020 (edition.js apply); an empty version is the data's own Unicode.
+      run: |
+        data=ecma262-regex-test-data
+        mkdir -p overlays
+        node "$data/unicode.js" apply 13.0 overlays/unicode-13 "$data/data"
+        node "$data/unicode.js" apply 18.0 overlays/unicode-18 "$data/data"
+        node "$data/edition.js" apply overlays/es2020 "" "$data/data"
+        node "$data/edition.js" apply overlays/es2020-unicode-13 13.0 "$data/data"
     - name: Run the ECMA-262 test data
+      # The data as it is, then each overlay judged through this package set to match.
       run: |
         docker run --rm -v "$PWD:/corvus-regex-ecma262-swift" -v "$RUNNER_TEMP/cre:/opt/cre:ro" -w /corvus-regex-ecma262-swift/tools/dataset \
           -e PKG_CONFIG_PATH=/opt/cre/lib/pkgconfig -e LD_LIBRARY_PATH=/opt/cre/lib docker.io/library/swift:6.4 \
-          bash -c 'apt-get update -qq && apt-get install -y -qq pkg-config >/dev/null && swift build -c release -j 4 && .build/release/dataset ../../ecma262-regex-test-data/data ../../wrong-cases.tsv'
+          bash -c '
+            apt-get update -qq && apt-get install -y -qq pkg-config >/dev/null && swift build -c release -j 4 || exit 1
+            failed=()
+            run() {
+              name=$1 dir=$2; shift 2
+              .build/release/dataset "../../$dir" "../../wrong-cases-$name.tsv" "$@" || failed+=("$name")
+            }
+            run default ecma262-regex-test-data/data
+            run unicode-13 overlays/unicode-13 --unicode 13
+            run unicode-18 overlays/unicode-18 --unicode 18
+            run es2020 overlays/es2020 --edition es2020
+            run es2020-unicode-13 overlays/es2020-unicode-13 --edition es2020 --unicode 13
+            if [ ${#failed[@]} -gt 0 ]; then echo "::error::Wrong: ${failed[*]}"; exit 1; fi'
     - name: Keep the wrong cases
       if: failure()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: wrong-cases
-        path: wrong-cases.tsv
+        path: wrong-cases*.tsv
 
   apple:
     name: Test (macOS) and build (iOS, iOS simulator)
