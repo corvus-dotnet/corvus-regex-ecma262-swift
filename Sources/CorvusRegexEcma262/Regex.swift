@@ -83,6 +83,37 @@ func seconds(_ millis: UInt64) -> Double? {
 
 let unset = Int(bitPattern: UInt(CRE_UNSET))
 
+/// The edition of ECMA-262 whose grammar a pattern is read with: today's, the default, or ECMAScript 2020's, which JSON
+/// Schema 2020-12 names. The 2020 grammar refuses what later editions added: the d and v flags, modifier groups, a
+/// name given to more than one group, and property names that are not in its edition's tables.
+public enum Edition: Sendable, Equatable {
+    case current
+    case es2020
+
+    var code: UInt32 { self == .es2020 ? UInt32(CRE_EDITION_ES2020) : UInt32(CRE_EDITION_CURRENT) }
+}
+
+/// The version of Unicode whose tables a pattern is read with (its properties and its case folding), independent of
+/// the edition: the default, which is the version of the V8 the answers are held to (17 today), 13, 17, 18, or the
+/// latest this package supports (18 today).
+public enum UnicodeVersion: Sendable, Equatable {
+    case `default`
+    case v13
+    case v17
+    case v18
+    case latest
+
+    var code: UInt32 {
+        switch self {
+        case .default: return UInt32(CRE_UNICODE_DEFAULT)
+        case .v13: return UInt32(CRE_UNICODE_13)
+        case .v17: return UInt32(CRE_UNICODE_17)
+        case .v18: return UInt32(CRE_UNICODE_18)
+        case .latest: return UInt32(CRE_UNICODE_LATEST)
+        }
+    }
+}
+
 /// A compiled ECMA-262 regular expression, as `new RegExp(pattern, flags)` compiles it. It is immutable: any number of
 /// threads may use one at once.
 public final class Regex: @unchecked Sendable {
@@ -95,19 +126,19 @@ public final class Regex: @unchecked Sendable {
     /// invalidPattern, invalidFlags or patternTooLarge. `timeout` is the time in seconds each match may take before it
     /// is abandoned with a RegexError of kind matchLimit (0 for none); nil takes `Regex.defaultTimeout`, which is none
     /// unless set. A timeout also caps the backtracking memory of a match; without one a match has no limit of time or
-    /// of memory, so give a pattern or a text from outside one.
-    public init(_ pattern: String, flags: String = "", timeout: Double? = nil) throws {
+    /// of memory, so give a pattern or a text from outside one. `edition` is the grammar the pattern is read with, and
+    /// `unicodeVersion` the version of Unicode whose tables it is read with; under `.es2020` the d and v flags are
+    /// invalidFlags. `try?` makes it a constructor that gives nil for a pattern that is not valid, with its timeout.
+    public init(_ pattern: String, flags: String = "", timeout: Double? = nil, edition: Edition = .current,
+                unicodeVersion: UnicodeVersion = .default) throws {
         var regex: OpaquePointer?
         var pattern = pattern
         var flags = flags
+        let ms = timeout.map(timeoutMillis) ?? cre_default_match_timeout()
         try pattern.withUTF8 { p in
             try flags.withUTF8 { f in
-                if let timeout {
-                    let ms = timeoutMillis(timeout)
-                    try check(cre_regex_new_with_timeout(chars(p), p.count, chars(f), f.count, ms, &regex))
-                } else {
-                    try check(cre_regex_new(chars(p), p.count, chars(f), f.count, &regex))
-                }
+                try check(cre_regex_new_with_options(chars(p), p.count, chars(f), f.count, ms, edition.code,
+                                                     unicodeVersion.code, &regex))
             }
         }
         let h = regex!
@@ -118,14 +149,29 @@ public final class Regex: @unchecked Sendable {
 
     deinit { cre_regex_free(handle) }
 
-    /// Whether a pattern is valid with the flags, without compiling it.
-    public static func isValid(_ pattern: String, flags: String = "") -> Bool {
+    /// Whether a pattern is valid with the flags, in the grammar of the edition and under the version of Unicode,
+    /// without compiling it.
+    public static func isValid(_ pattern: String, flags: String = "", edition: Edition = .current,
+                               unicodeVersion: UnicodeVersion = .default) -> Bool {
         var valid = false
         var pattern = pattern
         var flags = flags
-        let status = pattern.withUTF8 { p in flags.withUTF8 { f in cre_regex_is_valid(chars(p), p.count, chars(f), f.count, &valid) } }
+        let status = pattern.withUTF8 { p in
+            flags.withUTF8 { f in
+                cre_regex_is_valid_with_options(chars(p), p.count, chars(f), f.count, edition.code, unicodeVersion.code, &valid)
+            }
+        }
         return status == cre_status(CRE_OK) && valid
     }
+
+    /// The versions of Unicode a pattern can be read with.
+    public static let unicodeVersions = [13, 17, 18]
+
+    /// The version of Unicode `.default` stands for: the version of the V8 the answers are held to.
+    public static let defaultUnicodeVersion = 17
+
+    /// The version of Unicode `.latest` stands for: the latest this package supports.
+    public static let latestUnicodeVersion = 18
 
     /// The pattern as it was given.
     public var source: String { string(cre_regex_source(handle)) }
@@ -135,6 +181,12 @@ public final class Regex: @unchecked Sendable {
 
     /// The number of capturing groups.
     public var groupCount: Int { cre_regex_group_count(handle) }
+
+    /// The edition whose grammar the pattern was read with.
+    public var edition: Edition { cre_regex_edition(handle) == UInt32(CRE_EDITION_ES2020) ? .es2020 : .current }
+
+    /// The version of Unicode whose tables the pattern was read with, resolved: 13, 17 or 18.
+    public var unicodeVersion: Int { Int(cre_regex_unicode_version(handle)) }
 
     /// The time in seconds each match may take before it is abandoned with a RegexError of kind matchLimit, or nil for
     /// no limit.

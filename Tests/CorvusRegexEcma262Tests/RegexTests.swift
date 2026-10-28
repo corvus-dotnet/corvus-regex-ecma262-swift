@@ -19,11 +19,12 @@ final class RegexTests: XCTestCase {
         XCTAssertTrue(Regex.isValid("a{2,1"))
     }
 
+    func kind(_ f: () throws -> Void) -> RegexError.Kind? {
+        do { try f() } catch let e as RegexError { return e.kind } catch { return nil }
+        return nil
+    }
+
     func testErrors() {
-        func kind(_ f: () throws -> Void) -> RegexError.Kind? {
-            do { try f() } catch let e as RegexError { return e.kind } catch { return nil }
-            return nil
-        }
         XCTAssertEqual(kind { _ = try Regex("(") }, .invalidPattern)
         XCTAssertEqual(kind { _ = try Regex(#"\p{Nope}"#, flags: "u") }, .invalidPattern)
         XCTAssertEqual(kind { _ = try Regex("a", flags: "uv") }, .invalidFlags)
@@ -180,6 +181,116 @@ final class RegexTests: XCTestCase {
         XCTAssertNil(none.timeout)
     }
 
+    func testTheDefaultsAreTodaysGrammarAndV8sUnicode() throws {
+        let re = try Regex("a")
+        XCTAssertEqual(re.edition, .current)
+        XCTAssertEqual(re.unicodeVersion, 17)
+        XCTAssertEqual(Regex.defaultUnicodeVersion, 17)
+        XCTAssertEqual(Regex.latestUnicodeVersion, 18)
+        XCTAssertEqual(Regex.unicodeVersions, [13, 17, 18])
+    }
+
+    func testAVersionIsResolvedWhenThePatternIsCompiled() throws {
+        let cases: [(UnicodeVersion, Int)] = [(.default, 17), (.v13, 13), (.v17, 17), (.v18, 18), (.latest, 18)]
+        for (asked, resolved) in cases {
+            XCTAssertEqual(try Regex("a", unicodeVersion: asked).unicodeVersion, resolved, "\(asked)")
+        }
+        XCTAssertEqual(try Regex("a", unicodeVersion: .latest).unicodeVersion, Regex.latestUnicodeVersion)
+        XCTAssertEqual(try Regex("a").unicodeVersion, Regex.defaultUnicodeVersion)
+    }
+
+    func testEachVersionHasItsOwnScripts() throws {
+        let cases: [(String, UnicodeVersion, Bool)] = [
+            (#"\p{Script=Vithkuqi}"#, .v13, false),
+            (#"\p{Script=Vithkuqi}"#, .default, true),
+            (#"\p{Script=Yezidi}"#, .v13, true),
+            (#"\p{Script=Jurchen}"#, .default, false),
+            (#"\p{scx=Jurc}"#, .v18, true),
+            (#"\p{Script=Jurchen}"#, .latest, true),
+        ]
+        for (pattern, version, valid) in cases {
+            XCTAssertEqual(Regex.isValid(pattern, flags: "u", unicodeVersion: version), valid, "\(pattern) \(version)")
+            XCTAssertEqual(kind { _ = try Regex(pattern, flags: "u", unicodeVersion: version) }, valid ? nil : .invalidPattern)
+        }
+    }
+
+    func testAPropertyAndCaseFoldingAreTheVersions() throws {
+        let letter = "\u{10597}"
+        XCTAssertTrue(try Regex(#"^\p{Ll}$"#, flags: "u").test(letter))
+        XCTAssertFalse(try Regex(#"^\p{Ll}$"#, flags: "u", unicodeVersion: .v13).test(letter))
+        XCTAssertTrue(try Regex("\u{10570}", flags: "iu").test(letter))
+        XCTAssertFalse(try Regex("\u{10570}", flags: "iu", unicodeVersion: .v13).test(letter))
+        XCTAssertTrue(try Regex("\u{A7C0}", flags: "i").test("\u{A7C1}"))
+        XCTAssertFalse(try Regex("\u{A7C0}", flags: "i", unicodeVersion: .v13).test("\u{A7C1}"))
+    }
+
+    func testACaseInsensitiveBackreferenceFoldsAsItsVersionFolds() throws {
+        for (flags, text) in [("iu", "\u{10570}\u{10597}"), ("i", "\u{A7C0}\u{A7C1}")] {
+            let twice = String(repeating: String(text.first!), count: 2)
+            for pattern in [#"(.)\1"#, #"(?<=\1(.))"#, #"(?:x|(.))+\1$"#] {
+                for version in [UnicodeVersion.v17, .v18] {
+                    let re = try Regex(pattern, flags: flags, unicodeVersion: version)
+                    XCTAssertTrue(try re.test(text), "\(pattern) /\(flags) under \(version)")
+                    XCTAssertTrue(try re.test(utf16: u16(text)), "\(pattern) /\(flags) over UTF-16 under \(version)")
+                }
+                let re = try Regex(pattern, flags: flags, unicodeVersion: .v13)
+                XCTAssertFalse(try re.test(text), "\(pattern) /\(flags) under 13")
+                XCTAssertFalse(try re.test(utf16: u16(text)), "\(pattern) /\(flags) over UTF-16 under 13")
+                XCTAssertTrue(try re.test(twice), "\(pattern) /\(flags) under 13, the same letter twice")
+                XCTAssertNotNil(try re.firstMatch(in: twice))
+                XCTAssertNil(try re.firstMatch(in: text))
+            }
+        }
+    }
+
+    func testTheGrammarOf2020RefusesWhatLaterEditionsAdded() throws {
+        let cases = [
+            ("(?i:a)", ""), ("(?-i:a)", "i"), ("(?s:.)", "u"), ("(?<a>x)|(?<a>y)", ""), ("(?<a>x)|(?<a>y)", "u"),
+            (#"\p{Script=Yezidi}"#, "u"), (#"\p{sc=Vith}"#, "u"), (#"\p{Script_Extensions=Toto}"#, "u"),
+        ]
+        for (pattern, flags) in cases {
+            XCTAssertEqual(kind { _ = try Regex(pattern, flags: flags, edition: .es2020, unicodeVersion: .latest) },
+                           .invalidPattern, "\(pattern) /\(flags)")
+            XCTAssertFalse(Regex.isValid(pattern, flags: flags, edition: .es2020, unicodeVersion: .latest))
+            _ = try Regex(pattern, flags: flags, unicodeVersion: .latest)
+        }
+    }
+
+    func testTheGrammarOf2020AcceptsWhatItHad() throws {
+        let cases = [
+            (#"\p{Script=Greek}"#, "u"), (#"\p{L}\p{gc=Lu}\p{Lowercase}"#, "u"), (#"\P{scx=Latn}"#, "iu"),
+            (#"\p{Script=Yezidi}"#, ""), (#"(?<a>x)(?<b>y)\k<a>"#, "u"), ("(?<=a)(?<!b)", "s"), ("(?:i)", ""),
+        ]
+        for (pattern, flags) in cases {
+            let re = try Regex(pattern, flags: flags, edition: .es2020, unicodeVersion: .v13)
+            XCTAssertEqual(re.edition, .es2020)
+            XCTAssertEqual(re.unicodeVersion, 13)
+        }
+    }
+
+    func testTheGrammarOf2020HasNoDOrVFlag() throws {
+        for flags in ["d", "v", "dv", "gv"] {
+            XCTAssertEqual(kind { _ = try Regex("a", flags: flags, edition: .es2020) }, .invalidFlags, flags)
+            XCTAssertFalse(Regex.isValid("a", flags: flags, edition: .es2020))
+            _ = try Regex("a", flags: flags)
+        }
+    }
+
+    func testTheSettingsAndATimeoutGoTogether() throws {
+        let re = try Regex(Self.never, flags: "u", timeout: 0.03, edition: .es2020, unicodeVersion: .v13)
+        XCTAssertEqual(re.timeout, 0.03)
+        XCTAssertEqual(re.edition, .es2020)
+        XCTAssertEqual(re.unicodeVersion, 13)
+        assertLimit("the settings' timeout") { try re.test(Self.long) }
+        // try? is the constructor that gives nil for a pattern that is not valid: no default timeout is needed.
+        XCTAssertNil(try? Regex("(?i:a)", timeout: 0.03, edition: .es2020))
+        XCTAssertEqual((try? Regex("a", timeout: 0.03, edition: .es2020))?.timeout, 0.03)
+        // The settings take the default timeout when given none of their own.
+        Regex.defaultTimeout = 0.03
+        defer { Regex.defaultTimeout = nil }
+        XCTAssertEqual(try Regex("a", edition: .es2020, unicodeVersion: .v18).timeout, 0.03)
+    }
+
     // The README's example, as it is written there.
     func testReadme() throws {
         let date = try Regex(#"(?<year>\d{4})-(?<month>\d{2})"#, flags: "gu")
@@ -191,6 +302,8 @@ final class RegexTests: XCTestCase {
         XCTAssertEqual(try date.replace(in: "2026-10, 2027-01", with: "$<month>/$1"), "10/2026, 01/2027")
         XCTAssertEqual(try date.replace(in: "2026-10") { String($0["month"]!) }, "10")
         XCTAssertEqual(try Regex(#"\s*(;)\s*"#).split("a ; b;c"), ["a", ";", "b", ";", "c"])
+        let schemaPattern = try? Regex(#"^\p{L}+$"#, flags: "u", timeout: 1, edition: .es2020, unicodeVersion: .v13)
+        XCTAssertTrue(try XCTUnwrap(schemaPattern).test("café"))
     }
 
     func testNestedClassesOnASmallStack() {

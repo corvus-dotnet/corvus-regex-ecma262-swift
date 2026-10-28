@@ -3,6 +3,7 @@
 // judges it:
 //
 //   swift run -c release dataset <data directory> <wrong-cases file> [--files <glob>] [--compliance <file>]
+//                                [--edition current|es2020] [--unicode 13|17|18|latest]
 //
 // Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the unicode
 // answers), the record's flags alone (the legacy answers) and, in the file that has them, the flags with v added (the
@@ -22,6 +23,10 @@
 // name's group is read through Match.range(name), which gives a bound between the halves of a character as the whole
 // character's, so the answer's bounds are read the same way there; every group's exact bounds are checked by number.
 //
+// --edition and --unicode compile every pattern with that edition and version of Unicode, for the data as its own scripts
+// write it for them (edition.js apply and unicode.js apply in the data repository). Under es2020 a refusal of the d or v
+// flag is a refusal of the pattern, as the data's overlay counts it.
+//
 // With --compliance <file>, the engine's compliance object is written to the file, as the benchmark page reads it
 // (docs/implementing-a-source.md in corvus-regex-ecma262-benchmarks): the counts, this runner and the calls it makes in
 // each encoding, and what it leaves out, which for this package is nothing.
@@ -37,6 +42,32 @@ import Foundation
 
 let limit = 2.0
 let replacement = "<$&|$1|$2|$10|$<a>|$$|$`|$'>"
+
+// The value of an option of the command line, or nil.
+func option(_ name: String) -> String? {
+    let args = CommandLine.arguments
+    guard let k = args.firstIndex(of: name), k + 1 < args.count else { return nil }
+    return args[k + 1]
+}
+
+// The edition and the version of Unicode every pattern is compiled with (--edition, --unicode).
+let edition: Edition = {
+    switch option("--edition") ?? "current" {
+    case "current": return .current
+    case "es2020": return .es2020
+    case let other: fatalError("--edition must be current or es2020, not \(other)")
+    }
+}()
+let unicodeVersion: UnicodeVersion = {
+    switch option("--unicode") {
+    case nil: return .default
+    case "13": return .v13
+    case "17": return .v17
+    case "18": return .v18
+    case "latest": return .latest
+    case let other?: fatalError("--unicode must be 13, 17, 18 or latest, not \(other)")
+    }
+}()
 
 struct Counts {
     var right = 0, wrong = 0, refused = 0, accepted = 0, limited = 0, errors = 0
@@ -154,11 +185,12 @@ enum Compiled {
 
 func compile(_ pattern: String, _ flags: String) -> Compiled {
     do {
-        return .regex(try Regex(utf8Lossy(pattern), flags: flags))
+        return .regex(try Regex(utf8Lossy(pattern), flags: flags, edition: edition, unicodeVersion: unicodeVersion))
     } catch let e as RegexError {
         switch e.kind {
         case .invalidPattern: return .refused("PARSE: \(e.message)", false)
         case .patternTooLarge: return .refused("TOO-LARGE: \(e.message)", false)
+        case .invalidFlags where edition == .es2020: return .refused("FLAGS: \(e.message)", false)
         default: return .refused("ERROR: \(e.message)", true)
         }
     } catch {
@@ -562,14 +594,11 @@ func judgeLines(_ name: String, _ lines: ArraySlice<Substring>) -> (Counts, [Str
 
 let args = CommandLine.arguments
 guard args.count >= 3 else {
-    FileHandle.standardError.write("usage: dataset <data directory> <wrong-cases file> [--files glob] [--compliance file]\n".data(using: .utf8)!)
+    FileHandle.standardError.write(("usage: dataset <data directory> <wrong-cases file> [--files glob] [--compliance file] "
+        + "[--edition current|es2020] [--unicode 13|17|18|latest]\n").data(using: .utf8)!)
     exit(2)
 }
 let directory = args[1], wrongPath = args[2]
-func option(_ name: String) -> String? {
-    guard let k = args.firstIndex(of: name), k + 1 < args.count else { return nil }
-    return args[k + 1]
-}
 let filesGlob = option("--files") ?? "*.jsonl"
 let compliance = option("--compliance")
 var files = try FileManager.default.contentsOfDirectory(atPath: directory)
