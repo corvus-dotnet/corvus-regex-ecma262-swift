@@ -15,11 +15,14 @@ FROM swift:6.4@sha256:6fbd5978b56a5a9ff05a48f8f678079fc45be496ecda15b4e74e8944fa
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config python3 git util-linux ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
-# The C library: the release's archive for x86_64 Linux, checked against its hash.
+# The C library: the release's archive for the architecture being built, checked against its hash.
 ARG CRE_VERSION=0.2.3
-ARG CRE_SHA256=db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58
-RUN curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-    && echo "${CRE_SHA256}  /tmp/cre.tar.gz" | sha256sum -c - \
+ARG CRE_SHA256_X86_64=db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58
+ARG CRE_SHA256_AARCH64=34bc6162d468fa70a449f84a5376ba285d246b2a31f3c07247e31a845290c36b
+RUN case "$(uname -m)" in x86_64) arch=x86_64 sum=$CRE_SHA256_X86_64 ;; aarch64) arch=aarch64 sum=$CRE_SHA256_AARCH64 ;; \
+        *) echo "no archive of the C library is pinned for $(uname -m)"; exit 1 ;; esac \
+    && curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-$arch-unknown-linux-gnu.tar.gz" \
+    && echo "$sum  /tmp/cre.tar.gz" | sha256sum -c - \
     && mkdir -p /opt/cre && tar -xzf /tmp/cre.tar.gz -C /opt/cre --strip-components 1 && rm /tmp/cre.tar.gz
 ENV PKG_CONFIG_PATH=/opt/cre/lib/pkgconfig LD_LIBRARY_PATH=/opt/cre/lib
 # The tools find the package by its path, and Swift names a package by its directory.
