@@ -48,7 +48,7 @@ jobs:
       run: |
         docker run --rm -v "$PWD:/corvus-regex-ecma262-swift" -v "$RUNNER_TEMP/cre:/opt/cre:ro" -w /corvus-regex-ecma262-swift \
           -e PKG_CONFIG_PATH=/opt/cre/lib/pkgconfig -e LD_LIBRARY_PATH=/opt/cre/lib docker.io/library/swift:6.4 \
-          bash -c 'apt-get update -qq && apt-get install -y -qq pkg-config >/dev/null && swift test -j 4'
+          bash -c 'apt-get update -qq && apt-get install -y -qq pkg-config >/dev/null && swift test -j 4 && swift tools/docs/run-getting-started.swift'
 
   dataset:
     name: The ECMA-262 test data (linux-x64)
@@ -115,6 +115,8 @@ jobs:
         persist-credentials: false
     - name: Test
       run: swift test -j 4
+    - name: The getting-started page's programs
+      run: swift tools/docs/run-getting-started.swift
     - name: Build for iOS and the iOS simulator
       run: |
         xcodebuild build -scheme CorvusRegexEcma262 -destination 'generic/platform=iOS' -quiet
