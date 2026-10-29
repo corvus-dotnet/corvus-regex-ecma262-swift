@@ -16,9 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config pyth
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # The C library: the release's archive for the architecture being built, checked against its hash.
-ARG CRE_VERSION=0.2.3
-ARG CRE_SHA256_X86_64=db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58
-ARG CRE_SHA256_AARCH64=34bc6162d468fa70a449f84a5376ba285d246b2a31f3c07247e31a845290c36b
+ARG CRE_VERSION=0.2.5
+ARG CRE_SHA256_X86_64=d5568cdb5e5436c0a0b83c1616aabb1192198def688a8bd36bb5fb6cc8137ef1
+ARG CRE_SHA256_AARCH64=9ab1c0659377e8da919fcb425b6975492a518ed11c0e1ae3129d5cab7172d05a
 RUN case "$(uname -m)" in x86_64) arch=x86_64 sum=$CRE_SHA256_X86_64 ;; aarch64) arch=aarch64 sum=$CRE_SHA256_AARCH64 ;; \
         *) echo "no archive of the C library is pinned for $(uname -m)"; exit 1 ;; esac \
     && curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-$arch-unknown-linux-gnu.tar.gz" \
