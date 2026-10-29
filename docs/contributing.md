@@ -78,11 +78,12 @@ image each night beside every other engine; a run on another machine is comparab
 
 ## 7. Releases
 
-A release is made by hand, as a GitHub release tagged `v<version>` (SwiftPM reads the version past the `v`). Before
-it, a pull request moves the C library's release (section 4). The release publishes the harness image with its tag.
-The documentation site takes the published documents from the latest release, so a change to them ships with the next
-one. A change to the benchmark harness alone is a harness release (`gh release create harness-<version>.<n>
---latest=false`), which publishes the harness image.
+A release is made by hand, as a GitHub release tagged `v<version>` (SwiftPM reads the version past the `v`). Before it,
+a pull request moves the C library's release (section 4). The release publishes the harness image with its tag. A change
+to the benchmark harness alone is a harness release (`gh release create harness-<version>.<n> --latest=false`), which
+publishes the harness image. The documentation site takes the published documents (the getting-started page, the API
+reference, the design document and this guide) from `main`, and they describe the latest release: a change to them alone
+needs no release, and a change to the API carries its documents and is released straight after it is merged.
 
 `main` is protected by a ruleset: changes arrive by pull request, and the `CI gate` and `Harness image` checks must be
 green on the branch as it will merge.
